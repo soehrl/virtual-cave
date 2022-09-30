@@ -1,11 +1,36 @@
 import React, { useEffect, useRef, useState } from 'react';
 import logo from './logo.svg';
 import './App.css';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from './Controls';
-import { Color, DoubleSide } from 'three';
+import { Color, DoubleSide, Matrix4, Vector3 } from 'three';
 import { Box } from '@mui/material';
 import { useSearchParams } from 'react-router-dom';
+
+const caveSideLength = 5.25;
+const caveHeight = 3.3;
+
+interface WindowConfig {
+  loc: [number, number, number],
+  rot: [number, number, number],
+  top: number,
+  bottom: number,
+  left: number,
+  right: number,
+}
+
+type Config = {[window: string]: WindowConfig};
+
+const config: Config = {
+  "ngs01": {
+    loc: [0, 0, caveSideLength * 0.5],
+    rot: [0, 0, 0],
+    top: caveHeight,
+    bottom: 0,
+    left: -caveSideLength * 0.5,
+    right: caveSideLength * 0.5,
+  }
+};
 
 function Glasses(props: any) {
   // This reference will give us direct access to the mesh
@@ -49,8 +74,37 @@ interface CaveProps {
   glassPosition: [number, number, number];
 }
 
-function Cave(props: CaveProps) {
+function makeProjectionMatrix(side: WindowConfig, viewerPosition: Vector3) {
+  const matrix = new Matrix4();
 
+  const l = side.left;
+  const r = side.right;
+  const t = side.top;
+  const b = side.bottom;
+  const n = 0.01;
+  const f = 1000.0;
+  const x = viewerPosition.x;
+  const y = viewerPosition.y;
+  const z = viewerPosition.z;
+
+  const rml = r - l;
+  const rpl = r + l;
+  const tmb = t - b;
+  const tpb = t + b;
+  const fmn = f - n;
+  const z2mfmn = 2 * z - f - n;
+
+  matrix.set(
+    2 * z / rml, 0, 0, 0,
+    0, 2 * z / tmb, 0, 0,
+    (-2 * (x - 0.5 * rpl)) / rml, (-2 * (y - 0.5 * tpb)) / (t - b), z2mfmn / fmn, -1,
+    -rpl / rml * z, -tpb / tmb * z, (-z * z2mfmn + 2 * (f - z) * (n - z)) / fmn, z
+  );
+
+  return matrix;
+}
+
+function Cave(props: CaveProps) {
   return (
     <>
       <Glasses position={props.glassPosition} />
@@ -78,8 +132,18 @@ function Cave(props: CaveProps) {
   );
 }
 
-const caveSideLength = 5.25;
-const caveHeight = 4;
+function EgocentricProjection(props: { window: string, position: [number, number, number] }) {
+  const { camera } = useThree();
+  const position = new Vector3(props.position[0], props.position[1], props.position[2]);
+  const matrix = makeProjectionMatrix(config.ngs01, position);
+  camera.projectionMatrix = matrix;
+  camera.projectionMatrixInverse = matrix.clone().invert();
+  camera.position.set(position.x, position.y, position.z);
+
+  console.log(camera.projectionMatrix.toArray());
+
+  return null;
+}
 
 function App() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -109,6 +173,11 @@ function App() {
               d.bodies[0].loc[1] / 1000,
               d.bodies[0].loc[2] / 1000,
             ]);
+            console.log([
+              d.bodies[0].loc[0] / 1000,
+              d.bodies[0].loc[1] / 1000,
+              d.bodies[0].loc[2] / 1000,
+            ]);
           }
         }
       }
@@ -128,8 +197,20 @@ function App() {
   return (
     <>
       <Canvas>
+        <EgocentricProjection position={p} window="ngs01" />
         <OrbitControls />
-        <Cave glassPosition={p} />
+        <mesh position={[0, 0, -5]}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color={'hotpink'} />
+        </mesh>
+        <mesh position={[-5, 0, -5]}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color={'hotpink'} />
+        </mesh>
+        <mesh position={[5, 0, -5]}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial color={'hotpink'} />
+        </mesh>
         <ambientLight />
         <pointLight position={[10, 10, 10]} />
       </Canvas>
