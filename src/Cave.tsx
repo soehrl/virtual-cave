@@ -1,8 +1,8 @@
-import { PropsWithChildren, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { PropsWithChildren, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls } from './Controls';
-import { ColorRepresentation, DoubleSide, Euler, Matrix4, Vector3 } from 'three';
+import { OrbitControls, PerspectiveCamera, Plane, RenderTexture, Sphere, TransformControls} from '@react-three/drei';
+import { Camera, ColorRepresentation, DoubleSide, Euler, Matrix4, Object3D, Vector3 } from 'three';
 import { Box } from '@mui/material';
 
 const caveSideLength = 5.25;
@@ -45,7 +45,40 @@ const config: Config = {
     bottom: 0,
     left: -caveSideLength * 0.5,
     right: -caveSideLength * 0.5 + sideViewportWidth,
-  }
+  },
+
+  front: {
+    loc: [0, 0, caveSideLength * 0.5],
+    rot: [0, Math.PI, 0],
+    top: caveHeight,
+    bottom: 0,
+    left: -caveSideLength * 0.5,
+    right: caveSideLength * 0.5,
+  },
+  back: {
+    loc: [0, 0, -caveSideLength * 0.5],
+    rot: [0, 0, 0],
+    top: caveHeight,
+    bottom: 0,
+    left: -caveSideLength * 0.5,
+    right: caveSideLength * 0.5,
+  },
+  left: {
+    loc: [-caveSideLength * 0.5, 0, 0],
+    rot: [0, Math.PI * 0.5, 0],
+    top: caveHeight,
+    bottom: 0,
+    left: -caveSideLength * 0.5,
+    right: caveSideLength * 0.5,
+  },
+  right: {
+    loc: [caveSideLength * 0.5, 0, 0],
+    rot: [0, -Math.PI * 0.5, 0],
+    top: caveHeight,
+    bottom: 0,
+    left: -caveSideLength * 0.5,
+    right: caveSideLength * 0.5,
+  },
 };
 
 interface Body {
@@ -113,21 +146,37 @@ function Line(props: { start: Vector3, end: Vector3, color?: ColorRepresentation
   )
 }
 
-function EgocentricProjection(props: { viewport: string, position: [number, number, number] }) {
-  const { camera } = useThree();
-  const position = new Vector3(props.position[0], props.position[1], props.position[2]);
-  const matrix = makeProjectionMatrix(config[props.viewport], position);
-  camera.projectionMatrix = matrix;
-  camera.projectionMatrixInverse = matrix.clone().invert();
-  camera.position.set(position.x, position.y, position.z);
-
-  return null;
+interface EgocentricProjectionProps {
+  viewport: ViewportConfig;
+  viewerPosition: Vector3;
 }
 
-function ViewportDebugView(props: { viewport: string, position: [number, number, number] }) {
-  const viewport = config[props.viewport];
-  const position = new Vector3(props.position[0], props.position[1], props.position[2]);
-  const matrix = makeProjectionMatrix(config[props.viewport], position);
+function EgocentricProjection(props: EgocentricProjectionProps) {
+  const { camera, set } = useThree();
+  const cameraRef = useRef<any>();
+
+  useEffect(() => {
+    const matrix = makeProjectionMatrix(props.viewport, props.viewerPosition);
+    if (cameraRef.current) {
+      cameraRef.current.projectionMatrix = matrix;
+      cameraRef.current.projectionMatrixInverse = matrix.clone().invert();
+      cameraRef.current.position.copy(props.viewerPosition);
+    }
+  }, [props.viewport, props.viewerPosition, cameraRef.current]);
+
+  useEffect(() => {
+    const oldCamera = camera;
+    set({ camera: cameraRef.current });
+    return () => set({ camera: oldCamera });
+  }, [cameraRef]);
+
+  return <camera ref={cameraRef} />;
+}
+
+function ViewportDebugView(props: { viewport: ViewportConfig, position: Vector3 }) {
+  const viewport = props.viewport;
+  const position = props.position;
+  const matrix = makeProjectionMatrix(viewport, position);
   const inverse = matrix.clone().invert();
 
   const vertices = [
@@ -165,7 +214,7 @@ function ViewportDebugView(props: { viewport: string, position: [number, number,
     {
       [0, 1, 2, 3].map(i =>
         <>
-          <Line start={viewportVertices[i]} end={viewportVertices[(i + 1) % 4]} color="black" />
+          {/* <Line start={viewportVertices[i]} end={viewportVertices[(i + 1) % 4]} color="black" />*/}
           <Line start={transformed[i]} end={transformed[(i + 1) % 4]} color="green" />
           <Line start={transformed[i + 4]} end={transformed[4 + (i + 1) % 4]} color="green" />
         </>
@@ -183,22 +232,108 @@ function ViewportDebugView(props: { viewport: string, position: [number, number,
   );
 }
 
-function parseInitialCameraPosition(str?: string|null) {
-  const p = [0, 0, 0] as [number, number, number];
+interface ViewportViewProps extends PropsWithChildren {
+  viewport: ViewportConfig;
+  viewerPosition: Vector3;
+}
+
+function ViewportView(props: ViewportViewProps) {
+  return (
+    <>
+      <EgocentricProjection viewport={props.viewport} viewerPosition={props.viewerPosition} />
+      {props.children}
+    </>
+  );
+}
+
+interface MasterViewportViewProps extends PropsWithChildren {
+  viewport: ViewportConfig;
+  viewerPosition: Vector3;
+  // debug?: boolean;
+}
+
+function MasterViewportView(props: MasterViewportViewProps) {
+  const l = props.viewport.left;
+  const r = props.viewport.right;
+  const t = props.viewport.top;
+  const b = props.viewport.bottom;
+
+  const position = new Vector3(...props.viewport.loc);
+  position.add(new Vector3(0, caveHeight * 0.5, 0));
+
+  const projectionMatrix = makeProjectionMatrix(props.viewport, props.viewerPosition);
+  const inverseProjectionMatrix = projectionMatrix.clone().invert();
+
+  return (
+    <>
+      <Plane
+        position={position}
+        rotation={new Euler(...props.viewport.rot)}
+        args={[r - l, t - b, 1, 1]}
+      >
+        <meshStandardMaterial side={DoubleSide}>
+          <RenderTexture attach="map" width={100} height={100}>
+            <ViewportView
+              viewport={props.viewport}
+              viewerPosition={props.viewerPosition}
+            >
+            { props.children }
+            </ViewportView>
+          </RenderTexture>
+        </meshStandardMaterial>
+      </Plane>
+      <ViewportDebugView
+        viewport={props.viewport}
+        position={props.viewerPosition}
+      />
+    </>
+  );
+}
+
+interface MasterViewProps extends PropsWithChildren {
+  viewerPosition: Vector3;
+}
+
+function MasterView(props: MasterViewProps) {
+  return (
+    <Canvas>
+      <Sphere
+        position={props.viewerPosition}
+        args={[0.1]}
+      />
+      { props.children }
+      <OrbitControls makeDefault />
+      {
+        ['front', 'back', 'left', 'right'].map(side =>
+          <MasterViewportView
+            key={side}
+            viewport={config[side]}
+            viewerPosition={props.viewerPosition}
+          >
+            {props.children}
+          </MasterViewportView>
+        )
+      }
+    </Canvas>
+  );
+}
+
+function parseInitialViewerPosition(str?: string|null) {
+  const initialViewerPosition = new Vector3(0, 0, 0);
   if (str) {
     try {
-      const pos = JSON.parse(str);
-      if (Array.isArray(pos)) {
+      const positionArray = JSON.parse(str);
+      if (Array.isArray(positionArray)) {
         for (let i = 0; i < 3; ++i) {
-          if (pos.length > i && typeof pos[i] === 'number') {
-            p[i] = pos[i];
+          if (positionArray.length > i && typeof positionArray[i] === 'number') {
+            initialViewerPosition.setComponent(i, positionArray[i]);
           }
         }
       }
     } catch (error) {
     }
   }
-  return p;
+  return initialViewerPosition;
 }
 
 export interface CaveProps extends PropsWithChildren {
@@ -208,86 +343,63 @@ export default function Cave(props: CaveProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const dtrackURI = searchParams.get("dtrack");
   const viewport = searchParams.get("viewport");
-  const debugViewportFrustum = searchParams.get("debugViewportFrustum");
-  const initialCameraPosition = searchParams.get("initialCameraPosition");
-  const [p, setP] = useState<[number, number, number]>(() => parseInitialCameraPosition(initialCameraPosition));
-  const [trackingUpdateRate, setTrackingUpdateRate] = useState<number|undefined>();
+  // const debugViewportFrustum = searchParams.get("debugViewportFrustum");
+  const initialViewerPosition = searchParams.get("initialViewerPosition");
+  const [viewerPosition, setViewerPosition] = useState(() => parseInitialViewerPosition(initialViewerPosition));
+  // const [trackingUpdateRate, setTrackingUpdateRate] = useState<number|undefined>();
 
-  useEffect(() => {
-    if (dtrackURI) {
-      const realURI =
-        dtrackURI.startsWith("ws://") || dtrackURI.startsWith("wss://")
-        ? dtrackURI
-        : `ws://${dtrackURI}`;
-      const ws = new WebSocket(realURI);
+  // useEffect(() => {
+  //   if (dtrackURI) {
+  //     const realURI =
+  //       dtrackURI.startsWith("ws://") || dtrackURI.startsWith("wss://")
+  //       ? dtrackURI
+  //       : `ws://${dtrackURI}`;
+  //     const ws = new WebSocket(realURI);
 
-      let trackingUpdateCount = 0;
-      const trackingRateUpdateRateInterval = 250;
+  //     let trackingUpdateCount = 0;
+  //     const trackingRateUpdateRateInterval = 250;
 
-      ws.onmessage = event => {
-        ++trackingUpdateCount;
+  //     ws.onmessage = event => {
+  //       ++trackingUpdateCount;
 
-        const d = JSON.parse(event.data) as Data;
-        if (d.bodies.length > 0) {
-          if (d.bodies[0].loc) {
-            setP([
-              d.bodies[0].loc[0] / 1000,
-              d.bodies[0].loc[1] / 1000,
-              d.bodies[0].loc[2] / 1000,
-            ]);
-          }
-        }
-      }
+  //       const d = JSON.parse(event.data) as Data;
+  //       if (d.bodies.length > 0) {
+  //         if (d.bodies[0].loc) {
+  //           setP([
+  //             d.bodies[0].loc[0] / 1000,
+  //             d.bodies[0].loc[1] / 1000,
+  //             d.bodies[0].loc[2] / 1000,
+  //           ]);
+  //         }
+  //       }
+  //     }
 
-      const timer = setInterval(() => {
-        setTrackingUpdateRate(trackingUpdateCount / (trackingRateUpdateRateInterval / 1000));
-        trackingUpdateCount = 0;
-      }, trackingRateUpdateRateInterval);
+  //     const timer = setInterval(() => {
+  //       setTrackingUpdateRate(trackingUpdateCount / (trackingRateUpdateRateInterval / 1000));
+  //       trackingUpdateCount = 0;
+  //     }, trackingRateUpdateRateInterval);
 
-      return () => {
-        ws.close();
-        clearInterval(timer);
-      }
-    }
-  }, [dtrackURI]);
+  //     return () => {
+  //       ws.close();
+  //       clearInterval(timer);
+  //     }
+  //   }
+  // }, [dtrackURI]);
 
-  return (
-    <>
-      <Canvas
-        camera={{ manual: !!viewport }}
+  return viewport
+    ?
+    <Canvas>
+      <ViewportView
+        viewport={config[viewport]}
+        viewerPosition={viewerPosition}
       >
-        {
-          viewport ? <EgocentricProjection position={p} viewport={viewport} /> : <OrbitControls />
-        }
-        {
-          debugViewportFrustum ? <ViewportDebugView position={p} viewport={debugViewportFrustum} /> : null
-        }
-        {
-          viewport
-          ? null
-          : <mesh position={p}>
-              <boxGeometry args={[0.1, 0.1, 0.1]} />
-              <meshStandardMaterial color={'red'} />
-            </mesh>
-        }
-        <mesh rotation={[Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[caveSideLength, caveSideLength]} />
-          <meshStandardMaterial color={'yellow'} side={DoubleSide} />
-        </mesh>
         {props.children}
-      </Canvas>
-      <Box
-        component="div"
-        sx={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-        }}
-      >
-        <Box component="div">
-          Tracking Update Rate: {trackingUpdateRate}
-        </Box>
-      </Box>
-    </>
-  );
+      </ViewportView>
+    </Canvas>
+    : 
+    <MasterView
+      viewerPosition={viewerPosition}
+    >
+      {props.children}
+    </MasterView>;
 }
