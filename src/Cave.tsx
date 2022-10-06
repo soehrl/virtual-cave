@@ -79,6 +79,14 @@ const config: Config = {
     left: -caveSideLength * 0.5,
     right: caveSideLength * 0.5,
   },
+  floor: {
+    loc: [0, 0, 0],
+    rot: [-Math.PI * 0.5, 0, 0],
+    top: -caveSideLength * 0.5,
+    bottom: caveSideLength * 0.5,
+    left: -caveSideLength * 0.5,
+    right: caveSideLength * 0.5,
+  },
 };
 
 interface Body {
@@ -250,7 +258,7 @@ function ViewportView(props: ViewportViewProps) {
 interface MasterViewportViewProps extends PropsWithChildren {
   viewport: ViewportConfig;
   viewerPosition: Vector3;
-  // debug?: boolean;
+  debug?: boolean;
 }
 
 function MasterViewportView(props: MasterViewportViewProps) {
@@ -260,36 +268,45 @@ function MasterViewportView(props: MasterViewportViewProps) {
   const b = props.viewport.bottom;
 
   const position = new Vector3(...props.viewport.loc);
-  position.add(new Vector3(0, caveHeight * 0.5, 0));
+  const planePosition = new Vector3((r + l) * 0.5, (t + b) * 0.5, 0);
 
   return (
     <>
-      <Plane
+      <group
         position={position}
         rotation={new Euler(...props.viewport.rot)}
-        args={[r - l, t - b, 1, 1]}
       >
-        <meshStandardMaterial side={DoubleSide}>
-          <RenderTexture attach="map" width={100} height={100}>
-            <ViewportView
-              viewport={props.viewport}
-              viewerPosition={props.viewerPosition}
-            >
-            { props.children }
-            </ViewportView>
-          </RenderTexture>
-        </meshStandardMaterial>
-      </Plane>
-      <ViewportDebugView
-        viewport={props.viewport}
-        position={props.viewerPosition}
-      />
+        <Plane
+          position={planePosition}
+          args={[r - l, t - b, 1, 1]}
+        >
+          <meshStandardMaterial side={DoubleSide}>
+            <RenderTexture attach="map" width={100} height={100}>
+              <ViewportView
+                viewport={props.viewport}
+                viewerPosition={props.viewerPosition}
+              >
+              { props.children }
+              </ViewportView>
+            </RenderTexture>
+          </meshStandardMaterial>
+        </Plane>
+      </group>
+      {
+        props.debug ?
+          <ViewportDebugView
+            viewport={props.viewport}
+            position={props.viewerPosition}
+          />
+        : null
+      }
     </>
   );
 }
 
 interface MasterViewProps extends PropsWithChildren {
   viewerPosition: Vector3;
+  debugViewportFrustum?: string;
 }
 
 function MasterView(props: MasterViewProps) {
@@ -302,7 +319,18 @@ function MasterView(props: MasterViewProps) {
       { props.children }
       <OrbitControls makeDefault />
       {
-        ['front', 'back', 'left', 'right'].map(side =>
+        props.debugViewportFrustum ?
+          <MasterViewportView
+            viewport={config[props.debugViewportFrustum]}
+            viewerPosition={props.viewerPosition}
+            debug
+          >
+            {props.children}
+          </MasterViewportView>
+        : null
+      }
+      {
+        ['front', 'back', 'left', 'right', 'floor'].map(side =>
           <MasterViewportView
             key={side}
             viewport={config[side]}
@@ -341,48 +369,44 @@ export default function Cave(props: CaveProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const dtrackURI = searchParams.get("dtrack");
   const viewport = searchParams.get("viewport");
-  // const debugViewportFrustum = searchParams.get("debugViewportFrustum");
+  const debugViewportFrustum = searchParams.get("debugViewportFrustum");
   const initialViewerPosition = searchParams.get("initialViewerPosition");
   const [viewerPosition, setViewerPosition] = useState(() => parseInitialViewerPosition(initialViewerPosition));
-  // const [trackingUpdateRate, setTrackingUpdateRate] = useState<number|undefined>();
+  const [trackingUpdateRate, setTrackingUpdateRate] = useState<number|undefined>();
 
-  // useEffect(() => {
-  //   if (dtrackURI) {
-  //     const realURI =
-  //       dtrackURI.startsWith("ws://") || dtrackURI.startsWith("wss://")
-  //       ? dtrackURI
-  //       : `ws://${dtrackURI}`;
-  //     const ws = new WebSocket(realURI);
+  useEffect(() => {
+    if (dtrackURI) {
+      const realURI =
+        dtrackURI.startsWith("ws://") || dtrackURI.startsWith("wss://")
+        ? dtrackURI
+        : `ws://${dtrackURI}`;
+      const ws = new WebSocket(realURI);
 
-  //     let trackingUpdateCount = 0;
-  //     const trackingRateUpdateRateInterval = 250;
+      let trackingUpdateCount = 0;
+      const trackingRateUpdateRateInterval = 250;
 
-  //     ws.onmessage = event => {
-  //       ++trackingUpdateCount;
+      ws.onmessage = event => {
+        ++trackingUpdateCount;
 
-  //       const d = JSON.parse(event.data) as Data;
-  //       if (d.bodies.length > 0) {
-  //         if (d.bodies[0].loc) {
-  //           setP([
-  //             d.bodies[0].loc[0] / 1000,
-  //             d.bodies[0].loc[1] / 1000,
-  //             d.bodies[0].loc[2] / 1000,
-  //           ]);
-  //         }
-  //       }
-  //     }
+        const d = JSON.parse(event.data) as Data;
+        if (d.bodies.length > 0) {
+          if (d.bodies[0].loc) {
+            setViewerPosition(new Vector3(...d.bodies[0].loc).divideScalar(1000));
+          }
+        }
+      }
 
-  //     const timer = setInterval(() => {
-  //       setTrackingUpdateRate(trackingUpdateCount / (trackingRateUpdateRateInterval / 1000));
-  //       trackingUpdateCount = 0;
-  //     }, trackingRateUpdateRateInterval);
+      const timer = setInterval(() => {
+        setTrackingUpdateRate(trackingUpdateCount / (trackingRateUpdateRateInterval / 1000));
+        trackingUpdateCount = 0;
+      }, trackingRateUpdateRateInterval);
 
-  //     return () => {
-  //       ws.close();
-  //       clearInterval(timer);
-  //     }
-  //   }
-  // }, [dtrackURI]);
+      return () => {
+        ws.close();
+        clearInterval(timer);
+      }
+    }
+  }, [dtrackURI]);
 
   return viewport
     ?
@@ -397,6 +421,7 @@ export default function Cave(props: CaveProps) {
     : 
     <MasterView
       viewerPosition={viewerPosition}
+      debugViewportFrustum={debugViewportFrustum || undefined}
     >
       {props.children}
     </MasterView>;
