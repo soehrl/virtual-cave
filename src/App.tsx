@@ -1,6 +1,7 @@
+import aixcaveConfig from './aixcaveConfig';
 import './App.css';
 import Cave from './Cave';
-import { useTime } from './Time';
+import { useTime } from './Cave/Time';
 
 function SpinningCube(props: {color: string, position: [number, number, number]}) {
   const time = useTime();
@@ -17,7 +18,9 @@ function SpinningCube(props: {color: string, position: [number, number, number]}
 
 function App() {
   return (
-    <Cave>
+    <Cave
+      config={aixcaveConfig}
+    >
       <SpinningCube position={[-3, -2, 1]} color="green" />
       <SpinningCube position={[3, -3, -5]} color="green" />
       <SpinningCube position={[0, -0.75, 5]} color="green" />
