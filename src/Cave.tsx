@@ -161,6 +161,7 @@ function EgocentricProjection(props: EgocentricProjectionProps) {
       cameraRef.current.projectionMatrix = matrix;
       cameraRef.current.projectionMatrixInverse = matrix.clone().invert();
       cameraRef.current.position.copy(props.viewerPosition);
+      cameraRef.current.manual = true;
     }
   }, [props.viewport, props.viewerPosition, cameraRef.current]);
 
@@ -260,9 +261,6 @@ function MasterViewportView(props: MasterViewportViewProps) {
 
   const position = new Vector3(...props.viewport.loc);
   position.add(new Vector3(0, caveHeight * 0.5, 0));
-
-  const projectionMatrix = makeProjectionMatrix(props.viewport, props.viewerPosition);
-  const inverseProjectionMatrix = projectionMatrix.clone().invert();
 
   return (
     <>
