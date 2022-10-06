@@ -4,6 +4,7 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Plane, RenderTexture, Sphere, TransformControls} from '@react-three/drei';
 import { BackSide, Camera, ColorRepresentation, DoubleSide, Euler, Matrix4, Object3D, Vector3 } from 'three';
 import { Box } from '@mui/material';
+import { TimeContext } from "./Time";
 
 const caveSideLength = 5.25;
 const caveHeight = 3.3;
@@ -374,6 +375,14 @@ export default function Cave(props: CaveProps) {
   const initialViewerPosition = searchParams.get("initialViewerPosition");
   const [viewerPosition, setViewerPosition] = useState(() => parseInitialViewerPosition(initialViewerPosition));
   const [trackingUpdateRate, setTrackingUpdateRate] = useState<number|undefined>();
+  const [time, setTime] = useState(0);
+
+  useEffect(() => {
+    if (!dtrackURI) {
+      const timer = setInterval(() => setTime(time => time + 1/60), 1000/60);
+      return () => clearInterval(timer);
+    }
+  }, [dtrackURI]);
 
   useEffect(() => {
     if (dtrackURI) {
@@ -387,6 +396,7 @@ export default function Cave(props: CaveProps) {
       const trackingRateUpdateRateInterval = 250;
 
       ws.onmessage = event => {
+        setTime(time => time + 1/60);
         ++trackingUpdateCount;
 
         const d = JSON.parse(event.data) as Data;
@@ -409,21 +419,27 @@ export default function Cave(props: CaveProps) {
     }
   }, [dtrackURI]);
 
-  return viewport
-    ?
-    <Canvas>
-      <ViewportView
-        viewport={config[viewport]}
+  return (
+    <TimeContext.Provider value={{ time }}>
+      {
+      viewport
+      ?
+      <Canvas>
+        <ViewportView
+          viewport={config[viewport]}
+          viewerPosition={viewerPosition}
+        >
+          {props.children}
+        </ViewportView>
+      </Canvas>
+      : 
+      <MasterView
         viewerPosition={viewerPosition}
+        debugViewportFrustum={debugViewportFrustum || undefined}
       >
         {props.children}
-      </ViewportView>
-    </Canvas>
-    : 
-    <MasterView
-      viewerPosition={viewerPosition}
-      debugViewportFrustum={debugViewportFrustum || undefined}
-    >
-      {props.children}
-    </MasterView>;
+      </MasterView>
+      }
+    </TimeContext.Provider>
+  );
 }
