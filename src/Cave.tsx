@@ -2,7 +2,7 @@ import { PropsWithChildren, useEffect, useLayoutEffect, useReducer, useRef, useS
 import { useSearchParams } from "react-router-dom";
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Plane, RenderTexture, Sphere, TransformControls} from '@react-three/drei';
-import { Camera, ColorRepresentation, DoubleSide, Euler, Matrix4, Object3D, Vector3 } from 'three';
+import { BackSide, Camera, ColorRepresentation, DoubleSide, Euler, Matrix4, Object3D, Vector3 } from 'three';
 import { Box } from '@mui/material';
 
 const caveSideLength = 5.25;
@@ -249,6 +249,7 @@ interface ViewportViewProps extends PropsWithChildren {
 function ViewportView(props: ViewportViewProps) {
   return (
     <>
+      <color attach="background" args={["black"]} />
       <EgocentricProjection viewport={props.viewport} viewerPosition={props.viewerPosition} />
       {props.children}
     </>
@@ -280,7 +281,7 @@ function MasterViewportView(props: MasterViewportViewProps) {
           position={planePosition}
           args={[r - l, t - b, 1, 1]}
         >
-          <meshStandardMaterial side={DoubleSide}>
+          <meshStandardMaterial side={DoubleSide} opacity={0.9} transparent>
             <RenderTexture attach="map" width={100} height={100}>
               <ViewportView
                 viewport={props.viewport}
