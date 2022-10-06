@@ -2,8 +2,9 @@ import { PropsWithChildren, useEffect, useLayoutEffect, useReducer, useRef, useS
 import { useSearchParams } from "react-router-dom";
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Plane, RenderTexture, Sphere, TransformControls} from '@react-three/drei';
-import { BackSide, Camera, ColorRepresentation, DoubleSide, Euler, Matrix4, Object3D, Vector3 } from 'three';
-import { Box } from '@mui/material';
+import { BackSide, Camera, ColorRepresentation, DoubleSide, Euler, Matrix3, Matrix4, Object3D, Vector3 } from 'three';
+import { AppBar, Box, Button, createTheme, IconButton, ThemeProvider } from '@mui/material';
+import { Settings as SettingsIcon } from '@mui/icons-material';
 import { TimeContext } from "./Time";
 
 const caveSideLength = 5.25;
@@ -308,41 +309,63 @@ function MasterViewportView(props: MasterViewportViewProps) {
 
 interface MasterViewProps extends PropsWithChildren {
   viewerPosition: Vector3;
+  viewerOrientation: Matrix3;
+  ipd: number;
   debugViewportFrustum?: string;
 }
 
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+  },
+});
+
 function MasterView(props: MasterViewProps) {
+  const leftEyePosition = new Vector3(-0.5 * props.ipd, 0, 0).applyMatrix3(props.viewerOrientation).add(props.viewerPosition);
+  const rightEyePosition = new Vector3(0.5 * props.ipd, 0, 0).applyMatrix3(props.viewerOrientation).add(props.viewerPosition);
+
   return (
-    <Canvas>
-      <Sphere
-        position={props.viewerPosition}
-        args={[0.1]}
-      />
-      { props.children }
-      <OrbitControls makeDefault />
-      {
-        props.debugViewportFrustum ?
-          <MasterViewportView
-            viewport={config[props.debugViewportFrustum]}
-            viewerPosition={props.viewerPosition}
-            debug
-          >
-            {props.children}
-          </MasterViewportView>
-        : null
-      }
-      {
-        ['front', 'back', 'left', 'right', 'floor'].map(side =>
-          <MasterViewportView
-            key={side}
-            viewport={config[side]}
-            viewerPosition={props.viewerPosition}
-          >
-            {props.children}
-          </MasterViewportView>
-        )
-      }
-    </Canvas>
+    <ThemeProvider theme={darkTheme}>
+      <AppBar>
+        <IconButton>
+          <SettingsIcon />
+        </IconButton>
+      </AppBar>
+      <Canvas>
+        <Sphere
+          position={leftEyePosition}
+          args={[0.05]}
+        />
+        <Sphere
+          position={rightEyePosition}
+          args={[0.05]}
+        />
+        { props.children }
+        <OrbitControls makeDefault />
+        {
+          props.debugViewportFrustum ?
+            <MasterViewportView
+              viewport={config[props.debugViewportFrustum]}
+              viewerPosition={props.viewerPosition}
+              debug
+            >
+              {props.children}
+            </MasterViewportView>
+          : null
+        }
+        {
+          ['front', 'back', 'left', 'right', 'floor'].map(side =>
+            <MasterViewportView
+              key={side}
+              viewport={config[side]}
+              viewerPosition={props.viewerPosition}
+            >
+              {props.children}
+            </MasterViewportView>
+          )
+        }
+      </Canvas>
+    </ThemeProvider>
   );
 }
 
@@ -374,7 +397,9 @@ export default function Cave(props: CaveProps) {
   const debugViewportFrustum = searchParams.get("debugViewportFrustum");
   const initialViewerPosition = searchParams.get("initialViewerPosition");
   const [viewerPosition, setViewerPosition] = useState(() => parseInitialViewerPosition(initialViewerPosition));
+  const [viewerOrientation, setViewerOrientation] = useState(() => new Matrix3());
   const [trackingUpdateRate, setTrackingUpdateRate] = useState<number|undefined>();
+  const [ipd, setIPD] = useState(0.1);
   const [time, setTime] = useState(0);
 
   useEffect(() => {
@@ -403,6 +428,9 @@ export default function Cave(props: CaveProps) {
         if (d.bodies.length > 0) {
           if (d.bodies[0].loc) {
             setViewerPosition(new Vector3(...d.bodies[0].loc).divideScalar(1000));
+          }
+          if (d.bodies[0].rot) {
+            setViewerOrientation(new Matrix3().set(...d.bodies[0].rot).transpose());
           }
         }
       }
@@ -436,6 +464,8 @@ export default function Cave(props: CaveProps) {
       <MasterView
         viewerPosition={viewerPosition}
         debugViewportFrustum={debugViewportFrustum || undefined}
+        viewerOrientation={viewerOrientation}
+        ipd={ipd}
       >
         {props.children}
       </MasterView>
