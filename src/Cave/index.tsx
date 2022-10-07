@@ -1,28 +1,15 @@
-import { PropsWithChildren, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { forwardRef, PropsWithChildren, PropsWithRef, Ref, startTransition, useEffect, useImperativeHandle, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera, Plane, RenderTexture, Sphere, TransformControls} from '@react-three/drei';
-import { BackSide, Camera, ColorRepresentation, DoubleSide, Euler, Matrix3, Matrix4, Object3D, Vector3 } from 'three';
+import { Canvas, createPortal, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, OrthographicCamera, PerspectiveCamera, Plane, RenderTexture, ScreenQuad, Sphere, TransformControls, useFBO} from '@react-three/drei';
+import { BackSide, Camera, Color, ColorRepresentation, DoubleSide, Euler, Matrix3, Matrix4, Object3D, Scene, Texture, Vector3 } from 'three';
 import { AppBar, Box, Button, createTheme, IconButton, ThemeProvider } from '@mui/material';
-import { Settings as SettingsIcon } from '@mui/icons-material';
-import { TimeContext } from "./Time";
+import { Settings as SettingsIcon, TextRotateUpTwoTone } from '@mui/icons-material';
+import Cluster, { ClusterContext, useCluster } from "./Cluster";
 import Config from "./Config";
 import ViewportView from "./ViewportView";
 import { MasterView } from "./MasterView";
-
-interface Body {
-  id: string;
-  loc?: [number, number, number];
-  rot?: [number, number, number, number, number, number, number, number, number];
-}
-
-interface Data {
-  frame: number;
-  time: number;
-  bodies: Body[];
-};
-
-
+import { FrameReadyMessage, ServerMessage } from "./Messages";
 
 function parseInitialViewerPosition(str?: string|null) {
   const initialViewerPosition = new Vector3(0, 0, 0);
@@ -42,13 +29,115 @@ function parseInitialViewerPosition(str?: string|null) {
   return initialViewerPosition;
 }
 
+interface SyncedViewportProps extends PropsWithChildren {
+  frame?: number;
+  frameRendered?: (frame: number) => void;
+}
+
+const SyncedViewport = forwardRef((props: SyncedViewportProps, ref) => {
+  const { scene, camera, gl } = useThree();
+
+  const fbo = useFBO();
+  const cluster = useCluster();
+
+  useEffect(() => {
+    if (cluster) {
+      const startFrameListener = cluster.on('startFrame', message => {
+        console.log(`Rendering frame ${message.frame}`);
+        const t0 = performance.now();
+        // console.log(clearColor);
+        // gl.setClearColor(clearColor);
+        gl.setRenderTarget(fbo);
+        // gl.clear(true, false, false);
+        gl.render(scene, camera);
+        gl.setRenderTarget(null);
+        const t1 = performance.now();
+        // console.log(`Time: ${t1 - t0}ms`);
+        const px = new Uint8Array(4);
+        gl.readRenderTargetPixels(fbo, 0, 0, 1, 1, px);
+        const t2 = performance.now();
+        // console.log(`Time: ${t2 - t0}ms`);
+        // console.log(scene.toJSON());
+        cluster.emit('frameReady', JSON.stringify({
+          type: 'frameReady',
+          frame: message.frame,
+        }));
+      }, { objectify: true });
+
+      return () => { 
+        if (!(startFrameListener instanceof Cluster)) {
+          startFrameListener.off();
+        } else {
+          console.log("error");
+        }
+      }
+    }
+  }, [cluster]);
+
+  // useLayoutEffect(() => {
+  // }, [gl, scene, camera, props.frame]);
+
+  useImperativeHandle(ref, () => fbo.texture, [fbo]);
+
+  // useFrame((state, delta) => {
+  //   console.log(texture);
+  // }, 10000);
+
+  return (
+    <>
+      {props.children}
+    </>
+  );
+});
+
+interface ViewportCanvasProps extends PropsWithChildren {
+  frame?: number;
+  frameRendered?: (frame: number) => void;
+}
+
+function ViewportCanvas(props: ViewportCanvasProps) {
+  const [scene] = useState(() => new Scene())
+  const texture = useRef<Texture>();
+
+  return (
+    <Canvas
+    >
+      {
+        createPortal(
+          <SyncedViewport
+            ref={texture}
+            frame={props.frame}
+          >
+            {props.children}
+          </SyncedViewport>,
+          scene
+        )
+      }
+      {/*
+      <OrthographicCamera
+        makeDefault
+        args={[-1, 1, 1, -1, -1, 1]}
+      />
+      */}
+      <Plane args={[2, 2, 1, 1]}>
+        <meshToonMaterial>
+          {
+            texture.current ? <primitive object={texture.current} attach="map" /> : null
+          }
+        </meshToonMaterial>
+      </Plane>
+      <ambientLight />
+    </Canvas>
+  );
+}
+
 export interface CaveProps extends PropsWithChildren {
   config: Config;
 }
 
 export default function Cave(props: CaveProps) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const dtrackURI = searchParams.get("dtrack");
+  const serverURI = searchParams.get("server");
   const viewport = searchParams.get("viewport");
   const debugViewportFrustum = searchParams.get("debugViewportFrustum");
   const initialViewerPosition = searchParams.get("initialViewerPosition");
@@ -57,65 +146,70 @@ export default function Cave(props: CaveProps) {
   const [trackingUpdateRate, setTrackingUpdateRate] = useState<number|undefined>();
   const [ipd, setIPD] = useState(0.01);
   const [time, setTime] = useState(0);
+  const [frame, setFrame] = useState<number|undefined>();
+  const [cluster] = useState(() => new Cluster());
 
   useEffect(() => {
-    if (!dtrackURI) {
+    if (!serverURI) {
       const timer = setInterval(() => setTime(time => time + 1/60), 1000/60);
       return () => clearInterval(timer);
     }
-  }, [dtrackURI]);
+  }, [serverURI]);
 
   useEffect(() => {
-    if (dtrackURI) {
+    if (serverURI) {
       const realURI =
-        dtrackURI.startsWith("ws://") || dtrackURI.startsWith("wss://")
-        ? dtrackURI
-        : `ws://${dtrackURI}`;
+        serverURI.startsWith("ws://") || serverURI.startsWith("wss://")
+        ? serverURI
+        : `ws://${serverURI}`;
+
       const ws = new WebSocket(realURI);
-
-      let trackingUpdateCount = 0;
-      const trackingRateUpdateRateInterval = 250;
-
       ws.onmessage = event => {
-        setTime(time => time + 1/60);
-        ++trackingUpdateCount;
-
-        const d = JSON.parse(event.data) as Data;
-        if (d.bodies.length > 0) {
-          if (d.bodies[0].loc) {
-            setViewerPosition(new Vector3(...d.bodies[0].loc).divideScalar(1000));
-          }
-          if (d.bodies[0].rot) {
-            setViewerOrientation(new Matrix3().set(...d.bodies[0].rot).transpose());
-          }
-        }
+        const message = JSON.parse(event.data) as ServerMessage;
+        cluster.emit(message.type, message);
+        // switch (message.type) {
+        //   case "startFrame":
+        //     setTime(message.time);
+        //     setFrame(message.frame);
+        //     // const response: FrameReadyMessage = {
+        //     //   type: "frameReady",
+        //     //   frame: message.frame,
+        //     // };
+        //     // ws.send(JSON.stringify(response));
+        //     break;
+        // }
       }
 
-      const timer = setInterval(() => {
-        setTrackingUpdateRate(trackingUpdateCount / (trackingRateUpdateRateInterval / 1000));
-        trackingUpdateCount = 0;
-      }, trackingRateUpdateRateInterval);
+      const frameReadyListener = cluster.on('frameReady', message => {
+        console.log(message);
+        ws.send(JSON.stringify(message));
+      }, { objectify: true });
 
       return () => {
         ws.close();
-        clearInterval(timer);
+        if (!(frameReadyListener instanceof Cluster)) {
+          frameReadyListener.off();
+        }
       }
     }
-  }, [dtrackURI]);
+  }, [serverURI]);
 
   return (
-    <TimeContext.Provider value={{ time }}>
+    <ClusterContext.Provider value={cluster}>
       {
       viewport
       ?
-      <Canvas>
+      <ViewportCanvas
+        frame={frame}
+        frameRendered={frame => console.log(`Rendered frame: ${frame}`)}
+      >
         <ViewportView
           viewport={props.config[viewport]}
           viewerPosition={viewerPosition}
         >
           {props.children}
         </ViewportView>
-      </Canvas>
+      </ViewportCanvas>
       : 
       <MasterView
         config={props.config}
@@ -127,6 +221,6 @@ export default function Cave(props: CaveProps) {
         {props.children}
       </MasterView>
       }
-    </TimeContext.Provider>
+    </ClusterContext.Provider>
   );
 }

@@ -1,15 +1,18 @@
+import { Vector3 } from 'three';
 import aixcaveConfig from './aixcaveConfig';
 import './App.css';
 import Cave from './Cave';
-import { useTime } from './Cave/Time';
+import { useTime } from './Cave/Cluster';
 
 function SpinningCube(props: {color: string, position: [number, number, number]}) {
   const time = useTime();
 
   const rotation = time;
+  const p = new Vector3(...props.position);
+  p.setX(p.x + Math.sin(time));
 
   return (
-    <mesh position={props.position} rotation={[0, rotation, 0]}>
+    <mesh position={p} rotation={[0, 0, 0]}>
       <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial color={props.color} />
     </mesh>
