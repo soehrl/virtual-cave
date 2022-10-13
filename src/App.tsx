@@ -7,7 +7,6 @@ import { useTime } from './Cave/Cluster';
 function SpinningCube(props: {color: string, position: [number, number, number]}) {
   const time = useTime();
 
-  const rotation = time;
   const p = new Vector3(...props.position);
   p.setX(p.x + Math.sin(time));
 

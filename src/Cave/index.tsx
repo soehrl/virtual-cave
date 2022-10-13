@@ -10,6 +10,7 @@ import Config from "./Config";
 import ViewportView from "./ViewportView";
 import { MasterView } from "./MasterView";
 import { FrameReadyMessage, ServerMessage } from "./Messages";
+import SyncedCanvas from "./SyncedCanvas";
 
 function parseInitialViewerPosition(str?: string|null) {
   const initialViewerPosition = new Vector3(0, 0, 0);
@@ -29,107 +30,6 @@ function parseInitialViewerPosition(str?: string|null) {
   return initialViewerPosition;
 }
 
-interface SyncedViewportProps extends PropsWithChildren {
-  frame?: number;
-  frameRendered?: (frame: number) => void;
-}
-
-const SyncedViewport = forwardRef((props: SyncedViewportProps, ref) => {
-  const { scene, camera, gl } = useThree();
-
-  const fbo = useFBO();
-  const cluster = useCluster();
-
-  useEffect(() => {
-    if (cluster) {
-      const startFrameListener = cluster.on('startFrame', message => {
-        console.log(`Rendering frame ${message.frame}`);
-        const t0 = performance.now();
-        // console.log(clearColor);
-        // gl.setClearColor(clearColor);
-        gl.setRenderTarget(fbo);
-        // gl.clear(true, false, false);
-        gl.render(scene, camera);
-        gl.setRenderTarget(null);
-        const t1 = performance.now();
-        // console.log(`Time: ${t1 - t0}ms`);
-        const px = new Uint8Array(4);
-        gl.readRenderTargetPixels(fbo, 0, 0, 1, 1, px);
-        const t2 = performance.now();
-        // console.log(`Time: ${t2 - t0}ms`);
-        // console.log(scene.toJSON());
-        cluster.emit('frameReady', JSON.stringify({
-          type: 'frameReady',
-          frame: message.frame,
-        }));
-      }, { objectify: true });
-
-      return () => { 
-        if (!(startFrameListener instanceof Cluster)) {
-          startFrameListener.off();
-        } else {
-          console.log("error");
-        }
-      }
-    }
-  }, [cluster]);
-
-  // useLayoutEffect(() => {
-  // }, [gl, scene, camera, props.frame]);
-
-  useImperativeHandle(ref, () => fbo.texture, [fbo]);
-
-  // useFrame((state, delta) => {
-  //   console.log(texture);
-  // }, 10000);
-
-  return (
-    <>
-      {props.children}
-    </>
-  );
-});
-
-interface ViewportCanvasProps extends PropsWithChildren {
-  frame?: number;
-  frameRendered?: (frame: number) => void;
-}
-
-function ViewportCanvas(props: ViewportCanvasProps) {
-  const [scene] = useState(() => new Scene())
-  const texture = useRef<Texture>();
-
-  return (
-    <Canvas
-    >
-      {
-        createPortal(
-          <SyncedViewport
-            ref={texture}
-            frame={props.frame}
-          >
-            {props.children}
-          </SyncedViewport>,
-          scene
-        )
-      }
-      {/*
-      <OrthographicCamera
-        makeDefault
-        args={[-1, 1, 1, -1, -1, 1]}
-      />
-      */}
-      <Plane args={[2, 2, 1, 1]}>
-        <meshToonMaterial>
-          {
-            texture.current ? <primitive object={texture.current} attach="map" /> : null
-          }
-        </meshToonMaterial>
-      </Plane>
-      <ambientLight />
-    </Canvas>
-  );
-}
 
 export interface CaveProps extends PropsWithChildren {
   config: Config;
@@ -167,21 +67,9 @@ export default function Cave(props: CaveProps) {
       ws.onmessage = event => {
         const message = JSON.parse(event.data) as ServerMessage;
         cluster.emit(message.type, message);
-        // switch (message.type) {
-        //   case "startFrame":
-        //     setTime(message.time);
-        //     setFrame(message.frame);
-        //     // const response: FrameReadyMessage = {
-        //     //   type: "frameReady",
-        //     //   frame: message.frame,
-        //     // };
-        //     // ws.send(JSON.stringify(response));
-        //     break;
-        // }
       }
 
       const frameReadyListener = cluster.on('frameReady', message => {
-        console.log(message);
         ws.send(JSON.stringify(message));
       }, { objectify: true });
 
@@ -199,17 +87,14 @@ export default function Cave(props: CaveProps) {
       {
       viewport
       ?
-      <ViewportCanvas
-        frame={frame}
-        frameRendered={frame => console.log(`Rendered frame: ${frame}`)}
-      >
+      <SyncedCanvas>
         <ViewportView
           viewport={props.config[viewport]}
           viewerPosition={viewerPosition}
         >
           {props.children}
         </ViewportView>
-      </ViewportCanvas>
+      </SyncedCanvas>
       : 
       <MasterView
         config={props.config}
